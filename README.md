@@ -138,7 +138,11 @@ LearningPlaywrightFundamentals3x/
 │   │   └── 236_ME.spec.ts            # all() -> Locator[], read href per link
 │   ├── 07_WebTables/
 │   │   ├── 237_TestCase.spec.ts      # row loop, cells via allInnerTexts
-│   │   └── 238_TestCase.spec.ts      # dynamic XPath + following-sibling
+│   │   ├── 238_TestCase.spec.ts      # dynamic XPath + following-sibling
+│   │   ├── 239_TestCase.spec.ts      # filter({ hasText }) on a link list
+│   │   ├── 240_TestCase.spec.ts      # tr:has(td:text()) row selection
+│   │   ├── 241_WebTable_Pagination.spec.ts   # page-by-page search, inline
+│   │   └── 242_WebTable_Pagination.spec.ts   # same search as a helper
 │   └── 08_.. 23_/             # remaining topics, see the curriculum table
 ├── template/template.spec.ts  # starting skeleton for a new spec
 ├── ai/                        # RCA + flaky-analysis agents used by the reporter
@@ -1136,7 +1140,7 @@ test("navigate via the Make Appointment link", async ({ page }) => {
 | `<select>` | `combobox` | `dropdown` |
 | `<h1>` ... `<h6>` | `heading` | `title` |
 
-This is the top of the preference order from section 24. Reach for CSS (section 19) only when no role or label reaches the element, and for XPath (section 20) only when you need text matching or a parent walk.
+This is the top of the preference order from section 26. Reach for CSS (section 19) only when no role or label reaches the element, and for XPath (section 20) only when you need text matching or a parent walk.
 
 ---
 
@@ -1286,7 +1290,133 @@ const country = await page.locator('#customers tbody tr')
 
 ---
 
-## 24. Locator cheat sheet
+## 24. Filtering locators: `filter()`, `:has()`, `hasText`
+
+**Concept:** `.filter()` narrows a locator that matches many elements down to the ones containing given text or a given child, and the CSS pseudo-class `:has()` does the same thing inside the selector string.
+
+**Why:** The element you want to click is usually anonymous (a checkbox, an edit icon) and is only identifiable by the row or card it sits in, so you find the container by its text first, then reach inside it.
+
+**Q&A - why use this?**
+- **Q: When do I reach for it?** A: Any repeated structure, table rows, cards, list items, where the target has no unique attribute of its own but its neighbour has readable text.
+- **Q: `filter({ hasText })` or `:has()`?** A: They are equivalent in power. `filter()` chains and reads left to right, which is easier to debug; `:has()` keeps everything in one selector string, which is handy when you need it inside a single `locator()` call.
+- **Q: What's the gotcha?** A: Both match **substrings**, so `hasText: 'Rohan.Mehta'` also matches `Rohan.Mehta2`. Pass a `RegExp` with anchors, or use `:text-is()` instead of `:text()`, when you need an exact match.
+
+```mermaid
+flowchart TD
+    A["locator&#40;'tr'&#41;<br/>matches every row"] --> B{narrow by what?}
+    B -->|text inside| C["filter&#40;{ hasText: 'Luca' }&#41;"]
+    B -->|a child element| D["filter&#40;{ has: page.locator&#40;'.badge'&#41; }&#41;"]
+    B -->|inside the selector| E["locator&#40;\"tr:has&#40;td:text&#40;'Luca'&#41;&#41;\"&#41;"]
+    C & D & E --> F[one row]
+    F --> G["locator&#40;'input'&#41;.click&#40;&#41;<br/>reach inside it"]
+```
+
+**tests/07_WebTables/239_TestCase.spec.ts** - filter a link list by its label:
+
+```ts
+const forgottenPasswordLink = page.locator('a.list-group-item')
+    .filter({ hasText: 'Forgotten Password' });
+await forgottenPasswordLink.click();
+
+const privacyLink = page.locator('footer a').filter({ hasText: 'Privacy Policy' });
+await expect(privacyLink).toHaveAttribute('href', '#privacy-policy');
+```
+
+**tests/07_WebTables/240_TestCase.spec.ts** - find the row by its name cell, then tick the checkbox in it:
+
+```ts
+await page.locator("tr:has(td:text('Rohan.Mehta'))")
+    .locator('input')
+    .first()
+    .click();
+```
+
+The same row, written with `filter()` instead, and asserted rather than slept on:
+
+```ts
+const checkbox = page.locator('tr')
+    .filter({ hasText: 'Rohan.Mehta' })
+    .locator('input')
+    .first();
+
+await checkbox.check();
+await expect(checkbox).toBeChecked();    // retries, no waitForTimeout needed
+```
+
+| Need | Write |
+|---|---|
+| Row containing text | `.filter({ hasText: 'Luca' })` |
+| Row **not** containing text | `.filter({ hasNotText: 'Luca' })` |
+| Row containing an element | `.filter({ has: page.locator('.badge') })` |
+| Exact text, not substring | `.filter({ hasText: /^Luca Greco$/ })` |
+| All in one selector | `tr:has(td:text-is('Luca Greco'))` |
+
+---
+
+## 25. Paginated tables: searching across pages
+
+**Concept:** When a table splits across pages, the row you want may not be in the DOM at all, so you look on the current page, click next, and look again until you find it or run out of pages.
+
+**Why:** `filter()` only sees what is rendered. On a paginated table it silently returns zero matches for a row that exists on page four, and the test fails with a misleading "not found".
+
+**Q&A - why use this?**
+- **Q: How do I know when to stop?** A: When the next button is disabled. That is the reliable end-of-data signal, far better than hardcoding a page count that changes with the data.
+- **Q: Why `count()` rather than `isVisible()`?** A: `count()` returns 0 immediately for a missing row. `isVisible()` on an empty locator also returns false, but the count reads more clearly as "did this page have it".
+- **Q: What's the gotcha?** A: `while (true)` with no exit is an infinite loop if the next button never disables. Always throw when the button is disabled, and keep the throw *inside* the loop.
+
+```mermaid
+flowchart TD
+    A[Open the table] --> B["filter&#40;{ hasText: name }&#41;"]
+    B --> C{count &gt; 0?}
+    C -->|yes| D[Read the cells]
+    C -->|no| E{next disabled?}
+    E -->|yes| F[throw Row not found]
+    E -->|no| G[click next]
+    G --> B
+```
+
+**tests/07_WebTables/241_WebTable_Pagination.spec.ts** - the loop written inline:
+
+```ts
+let row;
+while (true) {
+    row = page.locator('#employees-tbody tr').filter({ hasText: 'Luca Greco' });
+    if (await row.count()) break;
+
+    const next = page.getByTestId('next-page');
+    if (await next.isDisabled()) throw new Error("Row not found!");
+    await next.click();
+}
+
+const email   = await row.locator('td[data-col="email"]').innerText();
+const country = await row.locator('td[data-col="country"]').innerText();
+```
+
+**tests/07_WebTables/242_WebTable_Pagination.spec.ts** - the same logic lifted into a helper, which is the version to keep:
+
+```ts
+async function findRowByName(page: Page, name: string): Promise<Locator> {
+    while (true) {
+        const row = page.locator('#employees-tbody tr').filter({ hasText: name });
+        if (await row.count()) return row;
+
+        const next = page.getByTestId('next-page');
+        if (await next.isDisabled()) throw new Error(`Row not found: ${name}`);
+        await next.click();
+    }
+}
+
+const row = await findRowByName(page, 'Luca Greco');
+const email = await row.locator('td[data-col="email"]').innerText();
+```
+
+The helper wins on three counts: the test reads as one line of intent, the error message names the row that was missing, and the next test that needs a row does not copy the loop again.
+
+Note `td[data-col="email"]` rather than `td:nth-child(3)`. When the app gives columns a data attribute, use it, a reordered column then changes nothing in the test.
+
+---
+
+## 26. Locator cheat sheet
 
 ```ts
 page.getByRole('button', { name: 'Submit' })   // preferred, accessibility based
@@ -1302,11 +1432,11 @@ page.locator('li').nth(2)
 page.locator('table tr').first()
 ```
 
-Order of preference: role -> label -> placeholder -> text -> testid -> CSS/XPath. Section 21 covers the role end of that list, sections 19 and 20 cover CSS and XPath, for the cases where the user-facing locators cannot reach the element.
+Order of preference: role -> label -> placeholder -> text -> testid -> CSS/XPath. Section 24 covers narrowing a multi-match locator with `filter()`. Section 21 covers the role end of that list, sections 19 and 20 cover CSS and XPath, for the cases where the user-facing locators cannot reach the element.
 
 ---
 
-## 25. Common assertions
+## 27. Common assertions
 
 ```ts
 await expect(page).toHaveTitle(/Playwright/);
@@ -1323,7 +1453,7 @@ All `expect` calls auto-wait, so you rarely need `waitForTimeout`.
 
 ---
 
-## 26. Troubleshooting
+## 28. Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
@@ -1336,7 +1466,7 @@ All `expect` calls auto-wait, so you rarely need `waitForTimeout`.
 
 ---
 
-## 27. Useful links
+## 29. Useful links
 
 - Playwright docs: https://playwright.dev/docs/intro
 - Codegen guide: https://playwright.dev/docs/codegen
