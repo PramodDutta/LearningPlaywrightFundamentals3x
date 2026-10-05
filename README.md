@@ -159,7 +159,12 @@ LearningPlaywrightFundamentals3x/
 │   │   └── 253_Context_Drag_Drop.spec.ts # right click and read the menu
 │   ├── 11_JS_Alerts/
 │   │   └── 254_JS_Alerts.spec.ts         # dialog events, on vs once
-│   └── 12_.. 23_/             # remaining topics, see the curriculum table
+│   ├── 12_Handle_SVG/
+│   │   ├── 255_SVG_TestCase.spec.ts      # svg click on a live site
+│   │   ├── 256_SVG_Advance_TC.spec.ts    # shapes, chart bars, ARIA roles
+│   │   ├── 257_SVG_Map_TC.spec.ts        # map paths via namespace-aware XPath
+│   │   └── 258_SVG_Map_TC_Optimized.spec.ts   # same map, CSS path selector
+│   └── 13_.. 23_/             # remaining topics, see the curriculum table
 ├── template/template.spec.ts  # starting skeleton for a new spec
 ├── ai/                        # RCA + flaky-analysis agents used by the reporter
 ├── utils/CustomReporter.ts    # custom HTML reporter (TTA branded)
@@ -1156,7 +1161,7 @@ test("navigate via the Make Appointment link", async ({ page }) => {
 | `<select>` | `combobox` | `dropdown` |
 | `<h1>` ... `<h6>` | `heading` | `title` |
 
-This is the top of the preference order from section 30. Reach for CSS (section 19) only when no role or label reaches the element, and for XPath (section 20) only when you need text matching or a parent walk.
+This is the top of the preference order from section 31. Reach for CSS (section 19) only when no role or label reaches the element, and for XPath (section 20) only when you need text matching or a parent walk.
 
 ---
 
@@ -1723,7 +1728,78 @@ await dialog.dismiss();
 
 ---
 
-## 30. Locator cheat sheet
+## 30. SVG elements: charts, shapes and maps
+
+**Concept:** SVG lives in its own XML namespace, so an `<svg>` and its `<path>`, `<circle>` and `<rect>` children are not ordinary HTML elements. Playwright's CSS engine reaches them fine, but XPath needs `name()` and the DOM `className` property behaves differently.
+
+**Why:** Charts, interactive maps and icon systems are all SVG, and the usual reflex of grabbing an element by class quietly fails on them in ways that look like a broken selector rather than a namespace issue.
+
+**Q&A - why use this?**
+- **Q: Why does my XPath find nothing?** A: XPath is namespace-aware, so `//svg//path` matches nothing. Write `//*[name()='svg']//*[name()='path']` instead, which is what makes the map example work.
+- **Q: Do CSS selectors work on SVG?** A: Yes. `page.locator('#circle-blue')` and `page.locator('.bar')` are the easy path and should be your first choice. The `class` attribute is also readable with `getAttribute('class')`.
+- **Q: What's the gotcha?** A: An SVG element's `className` is an `SVGAnimatedString` object, not a string, so JavaScript that does `el.className.includes(...)` breaks. Read the attribute with `getAttribute('class')` instead.
+
+```mermaid
+flowchart TD
+    A[Target inside an SVG] --> B{Which engine?}
+    B -->|CSS, preferred| C["locator&#40;'#circle-blue'&#41;<br/>locator&#40;'.bar'&#41;"]
+    B -->|role, if exposed| D["getByRole&#40;'button', { name: /Q3 bar/ }&#41;"]
+    B -->|XPath| E["//*[name&#40;&#41;='svg']//*[name&#40;&#41;='path']<br/>name&#40;&#41; is required"]
+    C & D & E --> F["getAttribute&#40;'class'&#41;<br/>not .className"]
+```
+
+**tests/12_Handle_SVG/256_SVG_Advance_TC.spec.ts** - clicking shapes and reading chart bar data:
+
+```ts
+await page.locator('#circle-blue').click();
+expect(await page.locator('#shapes-output').innerText()).toContain('Blue circle');
+
+// SVG nodes can carry ARIA roles, and then the usual locators just work
+await page.getByRole('button', { name: /Q3 bar/ }).click();
+await page.getByRole('radio', { name: '4 stars' }).click();
+
+for (const bar of await page.locator('.bar').all()) {
+    console.log(await bar.getAttribute('data-quarter'), await bar.getAttribute('height'));
+}
+```
+
+**tests/12_Handle_SVG/257_SVG_Map_TC.spec.ts** - an interactive map, where each state is a `<path>` carrying an ISO code in its class:
+
+```ts
+const states = await page.locator(
+    "//div[@id='admin1_map_inner']//*[name()='svg']//*[name()='path' and contains(@class,'sm_state')]"
+).all();
+
+for (const state of states) {
+    const cls = await state.getAttribute('class');
+    if (cls?.includes('INUP')) {
+        await state.click();          // Uttar Pradesh
+    }
+}
+```
+
+**tests/12_Handle_SVG/258_SVG_Map_TC_Optimized.spec.ts** - the same idea with a plain CSS `path` selector, which is shorter but matches every path on the page.
+
+**The version to keep.** Scanning every path and testing the class in JavaScript is a loop over the whole map. Playwright can do the filtering in the selector, which is one round trip instead of forty:
+
+```ts
+await page.locator('path.sm_state[class*="INUP"]').click();
+```
+
+| Need | Write |
+|---|---|
+| Shape by id | `page.locator('#circle-blue')` |
+| All chart bars | `page.locator('.bar')` |
+| SVG with an ARIA role | `page.getByRole('button', { name: /Q3/ })` |
+| XPath into SVG | `//*[name()='svg']//*[name()='path']` |
+| Read the class | `getAttribute('class')`, never `.className` |
+| Filter by class in the selector | `path[class*="INUP"]` |
+
+Two habits worth carrying out of these files: `await` every `click()` inside a loop, an un-awaited click is a floating promise that may never run before the test ends; and keep `page.pause()` outside the loop, inside it the Inspector reopens on every iteration.
+
+---
+
+## 31. Locator cheat sheet
 
 ```ts
 page.getByRole('button', { name: 'Submit' })   // preferred, accessibility based
@@ -1743,7 +1819,7 @@ Order of preference: role -> label -> placeholder -> text -> testid -> CSS/XPath
 
 ---
 
-## 31. Common assertions
+## 32. Common assertions
 
 ```ts
 await expect(page).toHaveTitle(/Playwright/);
@@ -1760,7 +1836,7 @@ All `expect` calls auto-wait, so you rarely need `waitForTimeout`.
 
 ---
 
-## 32. Troubleshooting
+## 33. Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
@@ -1773,7 +1849,7 @@ All `expect` calls auto-wait, so you rarely need `waitForTimeout`.
 
 ---
 
-## 33. Useful links
+## 34. Useful links
 
 - Playwright docs: https://playwright.dev/docs/intro
 - Codegen guide: https://playwright.dev/docs/codegen
