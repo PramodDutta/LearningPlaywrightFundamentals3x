@@ -1,0 +1,12 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0\fswiss Helvetica;}}
+{\colortbl;\red45\green173\blue51;\red28\green32\blue38;}
+\f0\fs36\cf2\b Playwright Upload Fixture - sample.doc\b0\par
+\fs24\par
+Used by module 14 to upload a Word document with setInputFiles.\par
+\par
+The PatternFly dropzone accepts: JPEG, Doc, PDF, PNG.\par
+Note it accepts .doc (application/msword), not .docx.\par
+\par
+\cf1\b The Testing Academy\b0\cf0\par
+}
