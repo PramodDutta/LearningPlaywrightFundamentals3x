@@ -15,11 +15,16 @@ test.describe('Scroll to Element - TestingAcademy', () => {
       await page.getByTestId('lazy-list').scrollIntoViewIfNeeded();
 
       const list = page.getByTestId('lazy-list').locator('li');
+
+      // wait for the first load to land (two batches of 5) before reading the count:
+      // read too early, initialCount is 0 and the poll below passes without any scroll.
+      await expect(list).toHaveCount(10);
       const initialCount = await list.count();
 
-      // scroll the LAST existing item into view — item 11 does not exist yet,
-      // so nth(10) would just wait until the test times out.
-      await list.last().scrollIntoViewIfNeeded();
+      // the next batch loads when the loader comes back into view. At 1920x1080 the
+      // whole list already fits, so scrolling to the last item alone loads nothing.
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.getByTestId('lazy-loader').scrollIntoViewIfNeeded();
 
 
       await expect.poll(async () => list.count(), {

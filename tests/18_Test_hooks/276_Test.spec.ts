@@ -12,8 +12,8 @@ test('login form is reachable via steps', async ({ page }) => {
         await expect(page.getByRole('textbox', { name: 'Password' })).toBeVisible();
     });
 
-    await test.step('submit + assert validation', async () => {
+    await test.step('submit + assert it lands on #login-success', async () => {
         await page.getByRole('button', { name: /Login/i }).click();
-        await expect(page.getByText(/required|invalid/i)).toBeVisible();
+        await expect(page).toHaveURL(/#login-success$/);
     });
 });

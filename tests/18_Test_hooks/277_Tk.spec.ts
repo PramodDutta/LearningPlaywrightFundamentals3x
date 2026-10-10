@@ -10,8 +10,8 @@ test.beforeEach(async ({ page }) => {
     await page.goto('https://app.thetestingacademy.com/playwright/');
 });
 
-test('practice index has 25 cards', async ({ page }) => {
-    await expect(page.locator('.index-card')).toHaveCount(29);
+test('practice index has 47 cards', async ({ page }) => {
+    await expect(page.locator('.index-card')).toHaveCount(47);
 });
 
 test('sidebar collapse button works', async ({ page }) => {

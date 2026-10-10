@@ -2035,12 +2035,12 @@ Save paths have the same rule as upload paths: build them from `__dirname`. A ba
 **Q&A - why use this?**
 - **Q: Do I need to scroll before clicking?** A: No. `click()`, `fill()` and `check()` all scroll the element into view first as part of their actionability checks.
 - **Q: When *do* I scroll explicitly?** A: Lazy lists and infinite scroll, where content only exists after the viewport reaches it, and visibility assertions on something below the fold.
-- **Q: What's the gotcha?** A: Scrolling to an element that does not exist yet just waits until the test times out. Scroll to the **last item that exists**, let the page append more, then poll for the count to grow.
+- **Q: What's the gotcha?** A: Two of them. Scrolling to an element that does not exist yet just waits until the test times out. And reading the starting count before the first batch has loaded gives 0, so "the count grew" passes without any scroll. Wait for the first load with `toHaveCount`, bring the loader back into view, then poll for the count to grow.
 
 ```mermaid
 flowchart TD
     A[Need to interact?] -->|click, fill, check| B[No scroll needed<br/>auto-scroll is built in]
-    A -->|lazy list / infinite scroll| C["last&#40;&#41;.scrollIntoViewIfNeeded&#40;&#41;"]
+    A -->|lazy list / infinite scroll| C["wait for the first load,<br/>then bring the loader into view"]
     C --> D["expect.poll&#40;&#41; until<br/>the count grows"]
     A -->|jump the page| E["evaluate&#40;window.scrollTo&#41;<br/>or keyboard End"]
 ```
@@ -2058,11 +2058,16 @@ await page.evaluate(() => window.scrollTo(0, 0));                 // back to the
 
 ```ts
 const list = page.getByTestId('lazy-list').locator('li');
+
+// Wait for the first load before reading the count. Read too early,
+// initialCount is 0 and the poll passes without any scroll.
+await expect(list).toHaveCount(10);
 const initialCount = await list.count();
 
-// Scroll to the LAST item that exists. nth(10) does not exist yet, so
-// scrolling to it would just wait until the test times out.
-await list.last().scrollIntoViewIfNeeded();
+// The next batch loads when the loader comes back into view. At 1920x1080
+// the whole list already fits, so scrolling to last() alone loads nothing.
+await page.evaluate(() => window.scrollTo(0, 0));
+await page.getByTestId('lazy-loader').scrollIntoViewIfNeeded();
 
 await expect.poll(async () => list.count(), {
    message: 'expected more than the initial items',
@@ -2087,7 +2092,7 @@ await expect(
 |---|---|
 | Click something below the fold | nothing, auto-scroll handles it |
 | Assert visibility below the fold | `scrollIntoViewIfNeeded()` |
-| Trigger lazy loading | scroll to `last()`, then `expect.poll` |
+| Trigger lazy loading | wait for the first load, bring the loader into view, then `expect.poll` |
 | Jump to the bottom | `evaluate(() => window.scrollTo(0, document.body.scrollHeight))` |
 | Infinite scroll by wheel | `page.mouse.wheel(0, 2000)` |
 | Cancel a pending wait | `{ signal: controller.signal }` |

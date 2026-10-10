@@ -4,7 +4,7 @@ test('Visible · enabled · disabled · checked', async ({ page }) => {
     await page.goto('https://app.thetestingacademy.com/playwright/tables/practice.html');
     const automationCheckBox = page.getByRole('checkbox', { name: /UFT/ });
     await automationCheckBox.check();
-    await expect(automationCheckBox).not.toBeChecked();
+    await expect(automationCheckBox).toBeChecked();
 
     const submitBtn = page.getByTestId('profile-submit');
     await expect(submitBtn).toBeVisible();
