@@ -174,8 +174,24 @@ LearningPlaywrightFundamentals3x/
 │   │   ├── 264_Mixed_FileUpload_TC.spec.ts         # pdf + jpg + doc together
 │   │   ├── 265_FileUpload_OtherDir_TC.spec.ts      # fixtures in test-data/
 │   │   └── *.jpg, *.pdf, *.doc           # upload fixtures
-│   └── 15_File_Download/
-│       └── 266_FileDownload_TC.spec.ts   # waitForEvent before the click
+│   ├── 15_File_Download/
+│   │   └── 266_FileDownload_TC.spec.ts   # waitForEvent before the click
+│   ├── 16_Scroll_toElement/
+│   │   ├── 267_Scroll_TC.spec.ts         # four ways to move the page
+│   │   ├── 268_Lazy_Scroll_TC.spec.ts    # lazy list + expect.poll
+│   │   └── 269_Abort_Signal_Scroll_TC.spec.ts  # cancelling a wait
+│   ├── 17_Expect_Assertions/
+│   │   ├── 270_Expect1.spec.ts           # plain value matchers
+│   │   ├── 271_Expect2.spec.ts           # web-first matchers
+│   │   ├── 272_Expect3.spec.ts           # soft assertions + negation
+│   │   ├── 273_Expect4.spec.ts           # visible, enabled, checked
+│   │   └── Expect_CheatSheet.md          # full matcher reference
+│   └── 18_Test_hooks/
+│       ├── 274_Test.spec.ts              # conditional skip / slow / fail
+│       ├── 276_Test.spec.ts              # test.step breakdowns
+│       ├── 277_Tk.spec.ts                # beforeAll/Each, afterEach/All
+│       ├── 278.td.spec.ts                # describe.serial
+│       └── 279.tp.spec.ts                # tags and --grep
 
 ├── template/template.spec.ts  # starting skeleton for a new spec
 ├── test-data/uploads/         # shared upload fixtures (see section 32)
@@ -1174,7 +1190,7 @@ test("navigate via the Make Appointment link", async ({ page }) => {
 | `<select>` | `combobox` | `dropdown` |
 | `<h1>` ... `<h6>` | `heading` | `title` |
 
-This is the top of the preference order from section 34. Reach for CSS (section 19) only when no role or label reaches the element, and for XPath (section 20) only when you need text matching or a parent walk.
+This is the top of the preference order from section 37. Reach for CSS (section 19) only when no role or label reaches the element, and for XPath (section 20) only when you need text matching or a parent walk.
 
 ---
 
@@ -2010,7 +2026,265 @@ Save paths have the same rule as upload paths: build them from `__dirname`. A ba
 
 ---
 
-## 34. Locator cheat sheet
+## 34. Scrolling and lazy-loaded content
+
+**Concept:** Playwright scrolls an element into view automatically before every action, so explicit scrolling is only needed when the *scroll itself* is what you are testing, as with lazy loading or infinite lists.
+
+**Why:** People arriving from Selenium scroll before every click out of habit. Here that is dead code, and it hides the one case where scrolling genuinely matters.
+
+**Q&A - why use this?**
+- **Q: Do I need to scroll before clicking?** A: No. `click()`, `fill()` and `check()` all scroll the element into view first as part of their actionability checks.
+- **Q: When *do* I scroll explicitly?** A: Lazy lists and infinite scroll, where content only exists after the viewport reaches it, and visibility assertions on something below the fold.
+- **Q: What's the gotcha?** A: Scrolling to an element that does not exist yet just waits until the test times out. Scroll to the **last item that exists**, let the page append more, then poll for the count to grow.
+
+```mermaid
+flowchart TD
+    A[Need to interact?] -->|click, fill, check| B[No scroll needed<br/>auto-scroll is built in]
+    A -->|lazy list / infinite scroll| C["last&#40;&#41;.scrollIntoViewIfNeeded&#40;&#41;"]
+    C --> D["expect.poll&#40;&#41; until<br/>the count grows"]
+    A -->|jump the page| E["evaluate&#40;window.scrollTo&#41;<br/>or keyboard End"]
+```
+
+**tests/16_Scroll_toElement/267_Scroll_TC.spec.ts** - the four ways to move the page:
+
+```ts
+await page.getByTestId("deep-anchor").scrollIntoViewIfNeeded();   // to an element
+await page.evaluate(() => window.scrollBy(0, 1000));              // by a delta
+await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));  // to the bottom
+await page.evaluate(() => window.scrollTo(0, 0));                 // back to the top
+```
+
+**tests/16_Scroll_toElement/268_Lazy_Scroll_TC.spec.ts** - the real lesson, a list that grows when you reach it:
+
+```ts
+const list = page.getByTestId('lazy-list').locator('li');
+const initialCount = await list.count();
+
+// Scroll to the LAST item that exists. nth(10) does not exist yet, so
+// scrolling to it would just wait until the test times out.
+await list.last().scrollIntoViewIfNeeded();
+
+await expect.poll(async () => list.count(), {
+   message: 'expected more than the initial items',
+   timeout: 10_000,
+}).toBeGreaterThan(initialCount);
+```
+
+`expect.poll()` is the tool for a value that is not a locator. It re-runs the function until the matcher passes or the timeout expires, which is what makes "the list grew" assertable without a `waitForTimeout`.
+
+**tests/16_Scroll_toElement/269_Abort_Signal_Scroll_TC.spec.ts** - cancelling a wait with an `AbortSignal` (Playwright 1.62+):
+
+```ts
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 500);
+
+await expect(
+   page.locator('button').scrollIntoViewIfNeeded({ signal: controller.signal })
+).rejects.toThrow('aborted');
+```
+
+| Need | Use |
+|---|---|
+| Click something below the fold | nothing, auto-scroll handles it |
+| Assert visibility below the fold | `scrollIntoViewIfNeeded()` |
+| Trigger lazy loading | scroll to `last()`, then `expect.poll` |
+| Jump to the bottom | `evaluate(() => window.scrollTo(0, document.body.scrollHeight))` |
+| Infinite scroll by wheel | `page.mouse.wheel(0, 2000)` |
+| Cancel a pending wait | `{ signal: controller.signal }` |
+
+---
+
+## 35. Assertions: web-first, soft, and negation
+
+**Concept:** Playwright has two families of assertion. `expect(locator)` matchers are **web-first**, they retry until they pass or time out. `expect(value)` matchers on plain values are immediate, exactly like Jest.
+
+**Why:** Nearly every flaky test is a non-retrying assertion racing an app that has not finished rendering. Knowing which family you are in is the difference between a stable suite and a noisy one.
+
+**Q&A - why use this?**
+- **Q: How do I tell them apart?** A: If the argument is a `Locator` or `Page`, it retries and you must `await` it. If it is a string, number or array, it is a one-shot check with no `await`.
+- **Q: What is `expect.soft` for?** A: It records a failure and keeps going, so one run reports every broken assertion instead of stopping at the first. The test still fails at the end.
+- **Q: What's the gotcha?** A: Forgetting `await` on a web-first assertion. It silently becomes a floating promise that never asserts anything, and the test passes.
+
+```mermaid
+flowchart TD
+    A["expect&#40;...&#41;"] --> B{What was passed?}
+    B -->|Locator or Page| C[web-first<br/>retries until timeout]
+    B -->|string, number, object| D[immediate<br/>no retry, no await]
+    C --> E["await expect&#40;loc&#41;.toBeVisible&#40;&#41;"]
+    C --> F["await expect.soft&#40;loc&#41;.toHaveValue&#40;''&#41;<br/>records, keeps going"]
+    D --> G["expect&#40;1 + 2&#41;.toBe&#40;3&#41;"]
+```
+
+**tests/17_Expect_Assertions/270_Expect1.spec.ts** - plain value matchers, no `await`:
+
+```ts
+expect(1 + 2).toBe(3);
+expect(false).toBeFalsy();
+expect(null).toBeNull();
+expect(34).toBeGreaterThan(11);
+expect([1, 2, 3]).toEqual([1, 2, 3]);
+expect({ age: 20, role: 'admin' }).toEqual({ role: 'admin', age: 20 });  // key order is irrelevant
+```
+
+**tests/17_Expect_Assertions/271_Expect2.spec.ts** - web-first matchers, every one awaited:
+
+```ts
+const heading = page.getByText('multiple element filters', { exact: true });
+await expect(heading).toBeVisible();
+await expect(heading).toContainText('filter', { timeout: 10000 });
+
+const email = page.getByRole('textbox', { name: 'Email Address' });
+await expect(email).toHaveAttribute('type', 'email');
+await expect(page.locator('footer a')).toHaveCount(16);
+```
+
+**tests/17_Expect_Assertions/272_Expect3.spec.ts** - soft assertions and negation:
+
+```ts
+// Soft: each line records its own failure, the test carries on.
+await expect.soft(firstName).toHaveAttribute('id', 'first-name');
+await expect.soft(firstName).toBeVisible();
+await expect.soft(firstName).toHaveValue('');
+
+// Hard: a failure here stops the test immediately.
+await expect(firstName).toBeEnabled();
+await expect(page.locator('#error')).not.toBeVisible();
+expect(await page.title()).not.toContain('error');
+```
+
+Use soft assertions when you are checking several independent properties of one page and want the whole picture from a single run. Use a hard assertion for anything the rest of the test depends on.
+
+**tests/17_Expect_Assertions/273_Expect4.spec.ts** - state matchers:
+
+```ts
+await expect(submitBtn).toBeVisible();
+await expect(submitBtn).toBeEnabled();
+await expect(page).toHaveTitle(/QA Profile/);
+expect(page.url()).toContain('thetestingacademy');
+```
+
+| Matcher | Family | Checks |
+|---|---|---|
+| `toBeVisible` / `toBeHidden` | web-first | rendered and not `display:none` |
+| `toBeEnabled` / `toBeDisabled` | web-first | interactable |
+| `toBeChecked` | web-first | checkbox or radio state |
+| `toHaveText` / `toContainText` | web-first | exact vs substring |
+| `toHaveValue` | web-first | input value |
+| `toHaveAttribute` | web-first | attribute value |
+| `toHaveCount` | web-first | number of matches |
+| `toHaveURL` / `toHaveTitle` | web-first | page level |
+| `toBe` / `toEqual` | immediate | identity vs deep equality |
+| `expect.poll(fn)` | retrying | any non-locator value, see section 34 |
+
+A full reference lives in `tests/17_Expect_Assertions/Expect_CheatSheet.md`.
+
+---
+
+## 36. Hooks, steps, serial mode and tags
+
+**Concept:** Hooks (`beforeAll`, `beforeEach`, `afterEach`, `afterAll`) wrap your tests with setup and teardown, `test.step()` groups actions inside a test, and `describe.serial` plus tags control what runs and in what order.
+
+**Why:** Without hooks every test repeats its own login and navigation; without steps a failing 40-line test reports one opaque error instead of pointing at the action that broke.
+
+**Q&A - why use this?**
+- **Q: `beforeAll` or `beforeEach`?** A: `beforeAll` runs once **per worker**, so it suits expensive shared setup. `beforeEach` runs before every test and is where per-test navigation and login belong.
+- **Q: When do I need `serial`?** A: Only when tests genuinely depend on each other, such as a checkout flow. It is a last resort, a serial suite cannot be parallelised and one failure skips the rest.
+- **Q: What's the gotcha?** A: `test.describe.configure({ mode: 'serial' })` at file top level applies to the **whole file**, not just the tests below it. Scope it inside a `describe` when you mean one group.
+
+```mermaid
+flowchart TD
+    A["beforeAll<br/>once per worker"] --> B["beforeEach<br/>before every test"]
+    B --> C["test&#40;&#41;<br/>with test.step&#40;&#41; inside"]
+    C --> D["afterEach<br/>screenshot on failure"]
+    D --> B
+    D --> E["afterAll<br/>tear down"]
+```
+
+**tests/18_Test_hooks/277_Tk.spec.ts** - the full hook cycle, including a conditional screenshot:
+
+```ts
+test.beforeAll(async () => {
+    console.log('beforeAll — server is up');     // once per worker
+});
+
+test.beforeEach(async ({ page }) => {
+    await page.goto('https://app.thetestingacademy.com/playwright/');
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+    if (testInfo.status !== testInfo.expectedStatus) {
+        await page.screenshot({ path: `out/fail-${testInfo.title}.png`, fullPage: true });
+    }
+});
+```
+
+That `testInfo.status !== testInfo.expectedStatus` comparison is the correct failure check. It stays right for tests marked `test.fail()`, where a *pass* is the unexpected outcome.
+
+**tests/18_Test_hooks/276_Test.spec.ts** - steps, which show up as a timed breakdown in the report:
+
+```ts
+await test.step('open practice page', async () => {
+    await page.goto('https://app.thetestingacademy.com/playwright/multiple_element_filter.html');
+});
+
+await test.step('fields are visible', async () => {
+    await expect(page.getByRole('textbox', { name: 'Email Address' })).toBeVisible();
+});
+```
+
+**tests/18_Test_hooks/274_Test.spec.ts** - conditional modifiers, which take a boolean and a reason:
+
+```ts
+test('title test', async ({ page, browserName }) => {
+    test.skip(browserName === 'firefox', 'Feature not yet supported on Firefox');
+    // ...
+});
+
+test('email is visible', async ({ page, browserName }) => {
+    test.slow(browserName === 'firefox', 'firefox is slow on this layout');
+    // ...
+});
+```
+
+**tests/18_Test_hooks/278.td.spec.ts** - a serial group beside independent tests:
+
+```ts
+test.describe.serial('Checkout suite — must run in order', () => {
+    test('open landing',  async () => { /* 1 */ });
+    test('search product', async () => { /* 2 */ });
+    test('add to cart',    async () => { /* 3 */ });
+});
+
+// these two still run in parallel
+test('standalone A', async () => {});
+test('standalone B', async () => {});
+```
+
+**tests/18_Test_hooks/279.tp.spec.ts** - tags in the title, filtered from the CLI:
+
+```ts
+test('Login test @p1 @smoke', async ({ page }) => { /* ... */ });
+test('Profile test @p2',      async ({ page }) => { /* ... */ });
+```
+
+```bash
+npx playwright test --grep @p1           # only p1
+npx playwright test --grep-invert @p3    # everything except p3
+npx playwright test --grep "@smoke|@p1"  # either
+```
+
+| Need | Use |
+|---|---|
+| Setup once per worker | `test.beforeAll` |
+| Setup per test | `test.beforeEach` |
+| Screenshot only on failure | `afterEach` + `testInfo.status !== testInfo.expectedStatus` |
+| Readable report breakdown | `test.step()` |
+| Order-dependent flow | `test.describe.serial()` |
+| Run a subset | `@tag` in the title + `--grep` |
+
+---
+
+## 37. Locator cheat sheet
 
 ```ts
 page.getByRole('button', { name: 'Submit' })   // preferred, accessibility based
@@ -2030,7 +2304,7 @@ Order of preference: role -> label -> placeholder -> text -> testid -> CSS/XPath
 
 ---
 
-## 35. Common assertions
+## 38. Common assertions
 
 ```ts
 await expect(page).toHaveTitle(/Playwright/);
@@ -2047,7 +2321,7 @@ All `expect` calls auto-wait, so you rarely need `waitForTimeout`.
 
 ---
 
-## 36. Troubleshooting
+## 39. Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
@@ -2060,7 +2334,7 @@ All `expect` calls auto-wait, so you rarely need `waitForTimeout`.
 
 ---
 
-## 37. Useful links
+## 40. Useful links
 
 - Playwright docs: https://playwright.dev/docs/intro
 - Codegen guide: https://playwright.dev/docs/codegen
