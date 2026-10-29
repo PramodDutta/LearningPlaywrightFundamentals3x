@@ -1,0 +1,39 @@
+import { test, expect} from '@playwright/test';
+
+test('Test Calender and date picker', async ({ page }) => {
+
+    await page.goto('https://app.thetestingacademy.com/playwright/widgets/calendar');
+
+    // Booking Dates, this can come from a config file or a data file, or can be generated dynamically
+    let departureDate = '2026-10-30';
+    let returnDate = '2026-11-10';
+
+    // Select Round Trip
+    await page.getByTestId('trip-roundtrip').click();
+    
+     // 1. Open departure date picker
+    await page.getByTestId('trigger-depart').click();
+
+    let picker = page.getByTestId('date-picker');
+    await expect(picker).toBeVisible();
+
+    // 2. Select Departure Date
+    await picker.getByTestId('day-' + departureDate).click();
+
+    // 3. Select Return Date
+    await page.getByTestId('trigger-return').click();
+    picker = page.getByTestId('date-picker');
+    await expect(picker).toBeVisible();
+
+    // Click Next Month button and select a date in the next month
+    await picker.getByTestId('next-month').click();
+    await picker.getByTestId('day-' + returnDate).click();
+
+    // 4. Click Search Flights
+    await page.getByTestId('search-flights').click();
+
+    // 5. Assertion
+    await expect(page.getByTestId('search-output')).toContainText(departureDate);
+    await expect(page.getByTestId('search-output')).toContainText(returnDate);
+
+});
